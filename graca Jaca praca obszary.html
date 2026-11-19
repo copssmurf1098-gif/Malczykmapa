@@ -1,0 +1,1679 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+    <title>mapa typu kpr</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #eef2f6;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* Kontener mapy dopasowany do ekranu telefonu (54dvh) i desktopu */
+        #map-container {
+            position: relative;
+            width: 100%;
+            height: 54dvh;
+            min-height: 340px;
+            max-height: 760px;
+            background: radial-gradient(circle at 35% 12%, #bae6fd 0%, #e0f2fe 36%, #f1f5f9 100%);
+            border-radius: 0.85rem;
+            overflow: hidden;
+            touch-action: none;
+        }
+
+        @media (min-width: 1024px) {
+            #map-container {
+                height: 78vh;
+                min-height: 580px;
+            }
+        }
+
+        svg#d3-poland-map {
+            width: 100%;
+            height: 100%;
+            display: block;
+            cursor: grab;
+        }
+        svg#d3-poland-map:active {
+            cursor: grabbing;
+        }
+
+        /* Województwa (GeoJSON) */
+        .voivodeship {
+            fill: #f8fafc;
+            fill-opacity: 0.35;
+            stroke: #475569;
+            stroke-width: 1.05;
+            stroke-linejoin: round;
+            vector-effect: non-scaling-stroke;
+            transition: fill 0.16s ease, fill-opacity 0.16s ease, stroke 0.16s ease;
+            cursor: pointer;
+        }
+        .voivodeship:hover {
+            fill: #cbd5e1;
+            fill-opacity: 0.55;
+        }
+
+        /* Tryb czystego podkładu fizycznego  */
+        .mode-hypsometric .voivodeship {
+            fill: #fdfcf7;
+            fill-opacity: 0.92;
+            stroke: #64748b;
+            stroke-width: 0.85;
+            stroke-dasharray: 3 2;
+        }
+        .mode-admin .voivodeship {
+            fill: #e2e8f0;
+            fill-opacity: 0.88;
+            stroke: #334155;
+            stroke-width: 1.25;
+            stroke-dasharray: none;
+        }
+
+        /* Organiczne pasy rzeźby terenu*/
+        .region-poly {
+            stroke-width: 1.1;
+            stroke-linejoin: round;
+            vector-effect: non-scaling-stroke;
+            cursor: pointer;
+            opacity: 0.86;
+            transition: opacity 0.16s ease, filter 0.16s ease, stroke-width 0.16s ease;
+        }
+        .region-poly:hover {
+            opacity: 0.99;
+            stroke-width: 2;
+            filter: brightness(1.06) drop-shadow(0 2px 4px rgba(15, 23, 42, 0.28));
+        }
+
+        /* Sieć hydrograficzna – rzeki */
+        .river-hit {
+            fill: none;
+            stroke: transparent;
+            stroke-width: 22;
+            vector-effect: non-scaling-stroke;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            cursor: pointer;
+        }
+        .river-line {
+            fill: none;
+            stroke: #0284c7;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            vector-effect: non-scaling-stroke;
+            pointer-events: none;
+            transition: stroke 0.16s ease, stroke-width 0.16s ease;
+        }
+        .river-main .river-line {
+            stroke: #0369a1;
+            stroke-width: 3.1;
+        }
+        .river-tributary .river-line {
+            stroke: #0ea5e9;
+            stroke-width: 2.05;
+        }
+        .river-group:hover .river-line {
+            stroke: #1d4ed8;
+            stroke-width: 5.2;
+        }
+
+        /* Jeziora */
+        .lake-group {
+            cursor: pointer;
+        }
+        .lake-hit {
+            fill: transparent;
+            stroke: transparent;
+            cursor: pointer;
+        }
+        .lake-poly {
+            fill: #0284c7;
+            stroke: #075985;
+            stroke-width: 1.1;
+            stroke-linejoin: round;
+            vector-effect: non-scaling-stroke;
+            transition: fill 0.16s ease, transform 0.16s ease;
+        }
+        .lake-group:hover .lake-poly {
+            fill: #38bdf8;
+            stroke: #0c4a6e;
+            stroke-width: 1.8;
+        }
+
+        /* Granice naturalne i sztuczne */
+        .border-hit {
+            fill: none;
+            stroke: transparent;
+            stroke-width: 22;
+            vector-effect: non-scaling-stroke;
+            stroke-linecap: round;
+            cursor: pointer;
+        }
+        .border-line {
+            fill: none;
+            stroke-width: 4.2;
+            vector-effect: non-scaling-stroke;
+            stroke-linecap: round;
+            pointer-events: none;
+            transition: stroke-width 0.16s ease;
+        }
+        .border-group:hover .border-line {
+            stroke-width: 7;
+        }
+
+        /* Markery punktowe (Szczyty, Parki Narodowe, Punkty skrajne) */
+        .geo-marker {
+            cursor: pointer;
+        }
+        .geo-marker:hover .marker-shape {
+            filter: brightness(1.14) drop-shadow(0 0 6px rgba(0, 0, 0, 0.45));
+        }
+
+        /* Stany weryfikacji odpowiedzi */
+        .is-correct {
+            fill: #22c55e !important;
+            fill-opacity: 0.92 !important;
+            stroke: #14532d !important;
+            stroke-width: 2.6 !important;
+            opacity: 1 !important;
+        }
+        .lake-group.is-correct .lake-poly {
+            fill: #22c55e !important;
+            stroke: #14532d !important;
+            stroke-width: 2.5 !important;
+        }
+        .river-group.is-correct .river-line,
+        .border-group.is-correct .border-line {
+            stroke: #16a34a !important;
+            stroke-width: 6.5 !important;
+        }
+        .geo-marker.is-correct .marker-shape {
+            fill: #16a34a !important;
+            stroke: #fef08a !important;
+            stroke-width: 2.6 !important;
+        }
+
+        .is-wrong {
+            fill: #ef4444 !important;
+            fill-opacity: 0.9 !important;
+            stroke: #7f1d1d !important;
+            stroke-width: 2.6 !important;
+            opacity: 1 !important;
+        }
+        .lake-group.is-wrong .lake-poly {
+            fill: #ef4444 !important;
+            stroke: #7f1d1d !important;
+        }
+        .river-group.is-wrong .river-line,
+        .border-group.is-wrong .border-line {
+            stroke: #dc2626 !important;
+            stroke-width: 6.5 !important;
+        }
+        .geo-marker.is-wrong .marker-shape {
+            fill: #dc2626 !important;
+        }
+
+        .is-hint {
+            animation: hintPulse 0.85s infinite alternate;
+        }
+        @keyframes hintPulse {
+            0% { opacity: 0.55; filter: drop-shadow(0 0 2px #f59e0b); }
+            100% { opacity: 1; filter: drop-shadow(0 0 11px #d97706); }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col text-slate-800">
+
+    <!-- Kompaktywny nagłówek Mobile-First -->
+    <header class="bg-slate-900 text-white shadow-md px-3 sm:px-5 py-2.5 sticky top-0 z-30">
+        <div class="max-w-7xl mx-auto flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2.5 min-w-0">
+                <div class="w-8 h-8 rounded-lg overflow-hidden border border-slate-600 shadow shrink-0 flex flex-col">
+                    <div class="h-1/2 bg-white"></div>
+                    <div class="h-1/2 bg-red-600"></div>
+                </div>
+                <div class="min-w-0">
+                    <div class="flex items-center gap-2">
+                        <h1 class="text-sm sm:text-lg font-extrabold tracking-tight truncate">mapa kpr polski</h1>
+                        <span id="geo-source-badge" class="hidden md:inline-block text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                            WGS84
+                        </span>
+                    </div>
+                    <p class="hidden sm:block text-[11px] text-slate-400 truncate">
+                        Mapa hipsometryczna, krainy geograficzne, rzeki, jeziora, szczyty, parki i województwa i malczyki
+                    </p>
+                </div>
+            </div>
+
+            <!-- Przełącznik trybu Quiz / Nauka (duże przyciski dotykowe) -->
+            <div class="flex items-center bg-slate-800 p-1 rounded-xl border border-slate-700 shrink-0">
+                <button id="tab-quiz" onclick="switchAppMode('quiz')" class="min-h-[38px] px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-bold bg-blue-600 text-white shadow transition">
+                    Quiz
+                </button>
+                <button id="tab-learn" onclick="switchAppMode('learn')" class="min-h-[38px] px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-bold text-slate-300 hover:text-white transition">
+                    Nauka
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Główny układ: na telefonie mapa na górze, panel pytania tuż pod nią -->
+    <main class="flex-1 max-w-7xl w-full mx-auto p-2.5 sm:p-4 grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-5 items-start">
+
+        <!-- PRAWA / GÓRNA KOLUMNA: INTERAKTYWNA MAPA KARTOGRAFICZNA D3.JS -->
+        <section class="lg:col-span-8 bg-white rounded-2xl p-2 sm:p-3.5 shadow-md border border-slate-200 flex flex-col gap-2 order-1 lg:order-2">
+
+            <!-- Pasek podkładu i szybkich przełączników warstw -->
+            <div class="flex flex-wrap items-center justify-between gap-1.5 pb-1.5 border-b border-slate-100 text-xs">
+                <div class="flex items-center gap-1.5">
+                    <button id="btn-view-hypso" onclick="setMapTheme('hypsometric')" class="min-h-[36px] px-2.5 py-1 rounded-lg font-bold bg-emerald-700 text-white shadow-sm transition">
+                        Mapa Hipsometryczna
+                    </button>
+                    <button id="btn-view-admin" onclick="setMapTheme('admin')" class="min-h-[36px] px-2.5 py-1 rounded-lg font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition">
+                        Administracyjna
+                    </button>
+                </div>
+
+                <!-- Przycisk otwierający chowaną szufladę warstw na telefonie -->
+                <button onclick="toggleDrawer('layers-bar')" class="sm:hidden min-h-[36px] px-2.5 py-1 rounded-lg font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                    Warstwy ▾
+                </button>
+
+                <div id="layers-bar" class="hidden sm:flex flex-wrap items-center gap-1.5 w-full sm:w-auto pt-1 sm:pt-0">
+                    <label class="inline-flex items-center gap-1.5 bg-slate-100 px-2.5 py-1.5 rounded-lg cursor-pointer min-h-[34px]">
+                        <input type="checkbox" id="chk-regions" checked onchange="setLayerVisibility('g-regions', this.checked)" class="accent-emerald-600">
+                        <span class="font-medium">Rzeźba/Krainy</span>
+                    </label>
+                    <label class="inline-flex items-center gap-1.5 bg-slate-100 px-2.5 py-1.5 rounded-lg cursor-pointer min-h-[34px]">
+                        <input type="checkbox" id="chk-waters" checked onchange="setLayerVisibility('g-waters', this.checked)" class="accent-sky-600">
+                        <span class="font-medium">Rzeki/Jeziora</span>
+                    </label>
+                    <label class="inline-flex items-center gap-1.5 bg-slate-100 px-2.5 py-1.5 rounded-lg cursor-pointer min-h-[34px]">
+                        <input type="checkbox" id="chk-borders" checked onchange="setLayerVisibility('g-borders', this.checked)" class="accent-purple-600">
+                        <span class="font-medium">Granice</span>
+                    </label>
+                    <label class="inline-flex items-center gap-1.5 bg-slate-100 px-2.5 py-1.5 rounded-lg cursor-pointer min-h-[34px]">
+                        <input type="checkbox" id="chk-points" checked onchange="setLayerVisibility('g-points', this.checked)" class="accent-rose-600">
+                        <span class="font-medium">Punkty/PN</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Kontener SVG D3.js z filtrem reliefu hipsometrycznego -->
+            <div id="map-container" class="mode-hypsometric border border-slate-200">
+                <svg id="d3-poland-map">
+                    <defs>
+                        <!-- Subtelny relief kartograficzny dla pasów rzeźby terenu -->
+                        <filter id="hypso-relief" x="-5%" y="-5%" width="110%" height="110%">
+                            <feDropShadow dx="0.8" dy="1.2" stdDeviation="1.4" flood-color="#1e293b" flood-opacity="0.22"/>
+                        </filter>
+                        <!-- Delikatna poświata dla sieci wodnej -->
+                        <filter id="water-glow" x="-10%" y="-10%" width="120%" height="120%">
+                            <feDropShadow dx="0" dy="0" stdDeviation="0.8" flood-color="#ffffff" flood-opacity="0.7"/>
+                        </filter>
+                    </defs>
+                </svg>
+
+                <!-- Przyciski Zoom / Reset (duże cele dotykowe min. 44x44px) -->
+                <div class="absolute bottom-2.5 right-2.5 flex flex-col gap-1.5 z-10">
+                    <button onclick="zoomMap(1.45)" aria-label="Przybliż" class="w-11 h-11 rounded-xl bg-white/95 active:bg-slate-100 shadow-md border border-slate-300 font-extrabold text-slate-800 text-xl flex items-center justify-center">+</button>
+                    <button onclick="zoomMap(0.68)" aria-label="Oddal" class="w-11 h-11 rounded-xl bg-white/95 active:bg-slate-100 shadow-md border border-slate-300 font-extrabold text-slate-800 text-xl flex items-center justify-center">−</button>
+                    <button onclick="resetZoom()" aria-label="Wyśrodkuj mapę" class="w-11 h-11 rounded-xl bg-white/95 active:bg-slate-100 shadow-md border border-slate-300 font-extrabold text-slate-700 text-xs flex items-center justify-center">1:1</button>
+                </div>
+
+                <!-- Siatka współrzędnych i podziałka -->
+                <div class="absolute bottom-2.5 left-2.5 bg-white/90 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-slate-200 text-[10px] font-semibold text-slate-600 pointer-events-none">
+                    WGS84 • 49°00'N–54°50'N • 14°07'E–24°09'E
+                </div>
+
+                <!-- Dymek podglądu w trybie nauki (desktop) -->
+                <div id="hover-tooltip" class="hidden fixed z-50 pointer-events-none bg-slate-900/95 text-white rounded-xl px-3 py-2 text-xs shadow-xl border border-slate-700 max-w-xs">
+                    <div id="tt-name" class="font-bold text-sm"></div>
+                    <div id="tt-desc" class="text-slate-300 mt-0.5"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- LEWA / DOLNA KOLUMNA: PANEL STEROWANIA, PYTAŃ I CHOWANA LEGENDA -->
+        <section class="lg:col-span-4 flex flex-col gap-3 order-2 lg:order-1">
+
+            <!-- Panel Aktywnego Quizu (na telefonie bezpośrednio pod mapą!) -->
+            <div id="panel-quiz" class="bg-white rounded-2xl p-3.5 sm:p-5 shadow-md border border-slate-200 flex flex-col gap-3">
+                <div class="flex items-center justify-between text-xs font-bold text-slate-500">
+                    <span id="quiz-progress-label">Pytanie 1 z 65</span>
+                    <div class="flex items-center gap-2.5">
+                        <span class="text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md" id="stat-correct">✓ 0</span>
+                        <span class="text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md" id="stat-wrong">✕ 0</span>
+                        <span class="text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md" id="stat-streak">🔥 0</span>
+                    </div>
+                </div>
+
+                <div class="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div id="quiz-progress-bar" class="h-full bg-blue-600 transition-all duration-300" style="width: 0%;"></div>
+                </div>
+
+                <!-- Treść zadania -->
+                <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 sm:p-4">
+                    <span id="q-badge" class="inline-block px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold uppercase tracking-wide bg-blue-100 text-blue-800 mb-1.5">
+                        Kategoria
+                    </span>
+                    <h2 id="q-title" class="text-base sm:text-lg font-extrabold text-slate-900 leading-snug">
+                        Wskaż na mapie: ...
+                    </h2>
+                    <p id="q-subtext" class="text-xs text-slate-600 mt-1">
+                        Dotknij odpowiedni element na mapie Polski.
+                    </p>
+                </div>
+
+                <!-- Drugi krok dla województw: wybór stolicy (brak kropek stolic na mapie!) -->
+                <div id="capital-box" class="hidden bg-indigo-50 border border-indigo-200 rounded-xl p-3.5 flex flex-col gap-2.5">
+                    <div class="flex items-start gap-2">
+                        <span class="text-base leading-none">🏛️</span>
+                        <div>
+                            <h3 id="capital-prompt" class="text-xs sm:text-sm font-bold text-indigo-950">Wybierz stolicę województwa:</h3>
+                            <p class="text-[11px] text-indigo-700">pozdro dla gracy malczyka i mono🦙🦙🦙</p>
+                        </div>
+                    </div>
+                    <div id="capital-buttons" class="grid grid-cols-1 sm:grid-cols-2 gap-2"></div>
+                </div>
+
+                <!-- Komunikat zwrotny po odpowiedzi -->
+                <div id="quiz-feedback" class="hidden rounded-xl p-3 text-xs sm:text-sm font-medium border"></div>
+
+                <!-- Przyciski akcji (min. 44px wysokości dla wygodnego kliknięcia kciukiem) -->
+                <div class="flex items-center gap-2 pt-0.5">
+                    <button id="btn-hint" onclick="triggerHint()" class="flex-1 min-h-[44px] py-2.5 px-3 rounded-xl border border-amber-300 bg-amber-50 active:bg-amber-100 text-amber-900 text-xs sm:text-sm font-bold transition">
+                        💡 Podpowiedź
+                    </button>
+                    <button id="btn-skip" onclick="triggerSkip()" class="flex-1 min-h-[44px] py-2.5 px-3 rounded-xl border border-slate-300 bg-white active:bg-slate-100 text-slate-700 text-xs sm:text-sm font-bold transition">
+                        Pomiń →
+                    </button>
+                    <button id="btn-next" onclick="goNextQuestion()" class="hidden w-full min-h-[46px] py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-sm font-bold shadow transition">
+                        Następne pytanie →
+                    </button>
+                </div>
+            </div>
+
+            <!-- Panel podsumowania quizu -->
+            <div id="panel-summary" class="hidden bg-white rounded-2xl p-5 shadow-md border border-slate-200 text-center flex flex-col items-center gap-3.5">
+                <div class="w-12 h-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-2xl">
+                    🏆
+                </div>
+                <div>
+                    <h2 class="text-lg sm:text-xl font-extrabold text-slate-900">Ukończono zestaw!</h2>
+                    <p id="summary-stats" class="text-xs sm:text-sm text-slate-600 mt-1"></p>
+                </div>
+                <div class="w-full flex flex-col gap-2">
+                    <button id="btn-retry-wrong" onclick="retryMistakes()" class="hidden w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold shadow transition">
+                        Powtórz tylko błędne odpowiedzi
+                    </button>
+                    <button onclick="initQuizCategory()" class="w-full min-h-[44px] py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold shadow transition">
+                        Zagraj ponownie od początku
+                    </button>
+                </div>
+            </div>
+
+            <!-- Panel Trybu Nauki (Encyklopedia mapy) -->
+            <div id="panel-learn" class="hidden bg-white rounded-2xl p-4 shadow-sm border border-slate-200 flex flex-col gap-2.5">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-sm sm:text-base font-bold text-slate-900">Tryb Nauki – Karta Obiektu</h2>
+                    <span class="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">Dotknij mapę</span>
+                </div>
+                <div id="learn-card" class="bg-slate-50 border border-slate-200 rounded-xl p-3.5 min-h-[104px] flex flex-col justify-center">
+                    <span class="text-xs text-slate-500">Kliknij lub dotknij dowolny pas rzeźby terenu, rzekę, jezioro, park narodowy, granicę lub województwo, aby wyświetlić opis kartograficzny.</span>
+                </div>
+            </div>
+
+            <!-- Wybór kategorii (zakresu pytań) -->
+            <div class="bg-white rounded-2xl p-3.5 shadow-sm border border-slate-200">
+                <label for="category-filter" class="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
+                    Zakres pytań (Kategoria)
+                </label>
+                <select id="category-filter" onchange="initQuizCategory()" class="w-full min-h-[44px] rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-xs sm:text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="all">Pełny Atlas Polski – Wszystkie obiekty (65)</option>
+                    <option value="hypso_regions">Góry, wyżyny, niziny, kotliny, wzgórza, pojezierza i krainy (27)</option>
+                    <option value="voivodeships">Podział administracyjny: 16 Województw i ich stolice (16)</option>
+                    <option value="waters">Wody: Rzeki i Jeziora (9)</option>
+                    <option value="extremes_borders">Punkty skrajne Polski i Granice (9)</option>
+                    <option value="parks">Parki Narodowe (4)</option>
+                </select>
+            </div>
+
+            <!-- Chowana szuflada / akordeon: Legenda Hipsomalczyczna -->
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <button onclick="toggleDrawer('legend-body')" class="w-full min-h-[44px] px-4 py-3 flex items-center justify-between text-left bg-slate-50/70 hover:bg-slate-100/70 transition">
+                    <span class="text-xs font-bold uppercase tracking-wider text-slate-700">Legenda Hipsomalczyczna i Znaki</span>
+                    <span id="legend-arrow" class="text-xs font-bold text-slate-500">Pokaż ▾</span>
+                </button>
+                <div id="legend-body" class="hidden lg:block p-3.5 border-t border-slate-100">
+                    <div class="grid grid-cols-2 gap-2 text-xs text-slate-700">
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-3.5 rounded border border-slate-500 shrink-0" style="background:#52b788;"></span>
+                            <span>Pojezierza / Bory / Żuławy</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-3.5 rounded border border-slate-500 shrink-0" style="background:#a8e082;"></span>
+                            <span>Niziny i Kotliny</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-3.5 rounded border border-slate-500 shrink-0" style="background:#f4d35e;"></span>
+                            <span>Wyżyny i Szeskie Wzgórza</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-3.5 rounded border border-slate-500 shrink-0" style="background:#9c4221;"></span>
+                            <span>Góry i pasma górskie</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-1.5 bg-sky-600 rounded shrink-0"></span>
+                            <span>Rzeki i Jeziora</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-3.5 h-3.5 rounded-full bg-emerald-700 border border-white shadow shrink-0"></span>
+                            <span>Parki Narodowe (4)</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-3.5 h-3.5 rotate-45 bg-rose-600 border border-white shadow shrink-0"></span>
+                            <span>Punkty skrajne (N/S/E/W)</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-1 bg-purple-600 rounded shrink-0"></span>
+                            <span>Granice nat. / sztuczne</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        /**
+         * graca Jaca praca malczor lama mono nożownik 6 osób w krakowie
+         */
+        const GEOJSON_URLS = [
+            "https://raw.githubusercontent.com/ppatrzyk/polska-geojson/master/wojewodztwa/wojewodztwa-min.geojson",
+            "https://raw.githubusercontent.com/jusuf/poland-geojson/master/wojewodztwa.geojson"
+        ];
+
+        // Zapasowy, wielowierzchołkowy zbiór granic 16 województw Polski we współrzędnych WGS84 [lon, lat]
+        const FALLBACK_VOIVODESHIPS_GEOJSON = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": { "nazwa": "zachodniopomorskie" },
+                    "geometry": { "type": "Polygon", "coordinates": [[[14.23,53.92],[14.52,53.96],[14.80,54.02],[15.20,54.10],[15.58,54.18],[15.90,54.23],[16.18,54.27],[16.48,54.42],[16.70,54.54],[16.82,54.40],[16.74,54.20],[16.68,54.05],[16.84,53.92],[16.95,53.78],[16.82,53.62],[16.72,53.50],[16.40,53.40],[16.12,53.32],[16.05,53.05],[15.78,53.03],[15.52,53.02],[15.18,52.96],[14.85,52.92],[14.42,52.84],[14.12,52.85],[14.18,53.02],[14.25,53.18],[14.34,53.38],[14.38,53.55],[14.30,53.74],[14.23,53.92]]] }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "nazwa": "pomorskie" },
+                    "geometry": { "type": "Polygon", "coordinates": [[[16.70,54.54],[17.08,54.66],[17.45,54.76],[17.90,54.81],[18.30,54.84],[18.81,54.60],[18.75,54.63],[18.42,54.74],[18.44,54.52],[18.55,54.42],[18.65,54.36],[19.05,54.39],[19.45,54.43],[19.35,54.22],[19.22,54.08],[19.12,53.95],[19.22,53.80],[19.32,53.68],[19.12,53.60],[18.92,53.55],[18.70,53.58],[18.48,53.62],[18.24,53.58],[18.02,53.54],[17.65,53.56],[17.32,53.58],[17.12,53.68],[16.95,53.78],[16.68,54.05],[16.82,54.40],[16.70,54.54]]] }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "nazwa": "warmińsko-mazurskie" },
+                    "geometry": { "type": "Polygon", "coordinates": [[[19.45,54.43],[19.85,54.44],[20.55,54.40],[21.25,54.35],[22.05,54.36],[22.79,54.36],[22.72,54.15],[22.65,53.95],[22.45,53.78],[22.25,53.62],[21.95,53.48],[21.65,53.38],[21.20,53.32],[20.75,53.26],[20.40,53.24],[20.05,53.22],[19.82,53.28],[19.65,53.35],[19.48,53.50],[19.32,53.68],[19.12,53.95],[19.35,54.22],[19.45,54.43]]] }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "nazwa": "podlaskie" },
+                    "geometry": { "type": "Polygon", "coordinates": [[[22.79,54.36],[23.18,54.26],[23.51,54.15],[23.52,53.92],[23.52,53.72],[23.70,53.50],[23.88,53.28],[23.92,53.00],[23.94,52.72],[23.75,52.50],[23.55,52.32],[23.25,52.30],[22.95,52.28],[22.70,52.42],[22.45,52.58],[22.25,52.76],[22.05,52.95],[21.88,53.18],[21.75,53.38],[22.25,53.62],[22.65,53.95],[22.79,54.36]]] }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "nazwa": "lubuskie" },
+                    "geometry": { "type": "Polygon", "coordinates": [[[14.42,52.84],[14.85,52.92],[15.52,53.02],[16.05,53.05],[15.96,52.80],[15.88,52.58],[15.92,52.35],[15.95,52.12],[15.84,51.90],[15.72,51.72],[15.42,51.56],[15.12,51.42],[14.92,51.48],[14.75,51.55],[14.72,51.80],[14.68,52.05],[14.60,52.25],[14.55,52.45],[14.48,52.65],[14.42,52.84]]] }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "nazwa": "wielkopolskie" },
+                    "geometry": { "type": "Polygon", "coordinates": [[[16.05,53.05],[16.12,53.32],[16.40,53.40],[16.72,53.50],[16.95,53.78],[17.32,53.58],[17.38,53.35],[17.42,53.15],[17.64,53.00],[17.85,52.88],[18.15,52.75],[18.45,52.62],[18.68,52.42],[18.88,52.22],[18.72,52.00],[18.55,51.78],[18.28,51.55],[18.02,51.32],[17.68,51.42],[17.35,51.52],[17.05,51.62],[16.75,51.72],[16.48,51.80],[16.22,51.88],[15.95,52.12],[15.88,52.58],[16.05,53.05]]] }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "nazwa": "kujawsko-pomorskie" },
+                    "geometry": { "type": "Polygon", "coordinates": [[[17.32,53.58],[17.65,53.56],[18.02,53.54],[18.48,53.62],[18.92,53.55],[19.32,53.68],[19.48,53.50],[19.65,53.35],[19.60,53.15],[19.55,52.95],[19.32,52.75],[19.12,52.58],[18.78,52.60],[18.45,52.62],[18.15,52.75],[17.85,52.88],[17.42,53.15],[17.32,53.58]]] }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "nazwa": "mazowieckie" },
+                    "geometry": { "type": "Polygon", "coordinates": [[[19.65,53.35],[20.05,53.22],[20.75,53.26],[21.65,53.38],[21.75,53.38],[22.05,52.95],[22.45,52.58],[22.95,52.28],[23.15,52.08],[22.85,51.90],[22.55,51.75],[22.20,51.55],[21.85,51.35],[21.48,51.22],[21.12,51.12],[20.82,51.20],[20.52,51.28],[20.36,51.50],[20.22,51.72],[20.02,51.95],[19.85,52.15],[19.60,52.28],[19.35,52.42],[19.12,52.58],[19.55,52.95],[19.65,53.35]]] }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "nazwa": "dolnośląskie" },
+                    "geometry": { "type": "Polygon", "coordinates": [[[14.75,51.55],[15.12,51.42],[15.72,51.72],[16.22,51.88],[16.75,51.72],[17.35,51.52],[17.50,51.32],[17.65,51.12],[17.48,50.90],[17.32,50.68],[17.10,50.50],[16.88,50.32],[16.65,50.22],[16.45,50.15],[16.32,50.34],[16.18,50.52],[15.92,50.64],[15.65,50.76],[15.38,50.80],[15.12,50.85],[14.95,50.95],[14.82,51.05],[14.78,51.30],[14.75,51.55]]] }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "nazwa": "łódzkie" },
+                    "geometry": { "type": "Polygon", "coordinates": [[[18.45,52.62],[19.12,52.58],[19.35,52.42],[19.85,52.15],[20.22,51.72],[20.52,51.28],[20.32,51.12],[20.12,50.98],[19.78,50.96],[19.45,50.95],[19.10,51.02],[18.75,51.08],[18.48,51.15],[18.22,51.22],[18.02,51.32],[18.28,51.55],[18.55,51.78],[18.88,52.22],[18.45,52.62]]] }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "nazwa": "świętokrzyskie" },
+                    "geometry": { "type": "Polygon", "coordinates": [[[20.12,50.98],[20.52,51.28],[21.12,51.12],[21.48,51.00],[21.82,50.88],[21.74,50.65],[21.65,50.42],[21.30,50.32],[20.95,50.25],[20.62,50.30],[20.32,50.35],[20.12,50.50],[19.95,50.65],[20.04,50.82],[20.12,50.98]]] }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "nazwa": "lubelskie" },
+                    "geometry": { "type": "Polygon", "coordinates": [[[21.85,51.35],[22.55,51.75],[23.15,52.08],[23.62,52.12],[23.72,51.82],[23.82,51.55],[23.98,51.20],[24.15,50.87],[24.05,50.60],[23.95,50.35],[23.60,50.30],[23.25,50.25],[22.85,50.32],[22.45,50.42],[22.12,50.65],[21.82,50.88],[21.85,51.35]]] }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "nazwa": "opolskie" },
+                    "geometry": { "type": "Polygon", "coordinates": [[[17.35,51.52],[18.02,51.32],[18.22,51.22],[18.52,50.95],[18.42,50.48],[18.12,50.30],[17.85,50.12],[17.58,50.20],[17.32,50.28],[17.10,50.30],[16.88,50.32],[17.32,50.68],[17.65,51.12],[17.35,51.52]]] }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "nazwa": "śląskie" },
+                    "geometry": { "type": "Polygon", "coordinates": [[[18.22,51.22],[18.75,51.08],[19.45,50.95],[19.65,50.75],[19.82,50.55],[19.62,50.32],[19.45,50.12],[19.34,49.82],[19.22,49.55],[19.04,49.53],[18.85,49.52],[18.70,49.72],[18.55,49.92],[18.42,50.48],[18.52,50.95],[18.22,51.22]]] }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "nazwa": "małopolskie" },
+                    "geometry": { "type": "Polygon", "coordinates": [[[19.45,50.12],[19.82,50.55],[19.95,50.65],[20.32,50.35],[20.95,50.25],[21.35,50.15],[21.30,49.80],[21.25,49.45],[20.90,49.40],[20.55,49.35],[20.24,49.28],[19.93,49.20],[19.68,49.30],[19.45,49.42],[19.22,49.55],[19.45,50.12]]] }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "nazwa": "podkarpackie" },
+                    "geometry": { "type": "Polygon", "coordinates": [[[21.35,50.15],[21.65,50.42],[21.82,50.88],[22.45,50.42],[23.25,50.25],[23.35,50.05],[23.45,49.85],[23.15,49.42],[22.85,49.00],[22.55,49.08],[22.25,49.15],[21.95,49.25],[21.65,49.35],[21.25,49.45],[21.35,50.15]]] }
+                }
+            ]
+        };
+
+        /**
+         * 2. METADANE 16 WOJEWÓDZTW POLSKI
+         */
+        const VOIVODESHIP_META = {
+            "dolnośląskie": { id: "woj-dolnoslaskie", name: "Województwo dolnośląskie", capitals: ["Wrocław"], hint: "Południowo-zachodnia Polska (Sudety, Nizina Śląska)." },
+            "kujawsko-pomorskie": { id: "woj-kujawsko-pomorskie", name: "Województwo kujawsko-pomorskie", capitals: ["Bydgoszcz", "Toruń"], hint: "Północno-środkowa Polska nad dolną Wisłą i Brdą." },
+            "lubelskie": { id: "woj-lubelskie", name: "Województwo lubelskie", capitals: ["Lublin"], hint: "Wschodnia Polska między Wisłą a Bugiem." },
+            "lubuskie": { id: "woj-lubuskie", name: "Województwo lubuskie", capitals: ["Gorzów Wielkopolski", "Zielona Góra"], hint: "Zachodnia Polska przy granicy z Niemcami (nad Odrą i Wartą)." },
+            "łódzkie": { id: "woj-lodzkie", name: "Województwo łódzkie", capitals: ["Łódź"], hint: "Centralna Polska – geometryczny środek kraju." },
+            "małopolskie": { id: "woj-malopolskie", name: "Województwo małopolskie", capitals: ["Kraków"], hint: "Południowa Polska (Tatry, Pogórze Karpackie, górna Wisła)." },
+            "mazowieckie": { id: "woj-mazowieckie", name: "Województwo mazowieckie", capitals: ["Warszawa"], hint: "Największe województwo w środkowo-wschodniej Polsce." },
+            "opolskie": { id: "woj-opolskie", name: "Województwo opolskie", capitals: ["Opole"], hint: "Najmniejsze powierzchniowo województwo na południu Polski." },
+            "podkarpackie": { id: "woj-podkarpackie", name: "Województwo podkarpackie", capitals: ["Rzeszów"], hint: "Południowo-wschodni kraniec Polski (Bieszczady, Kotlina Sandomierska)." },
+            "podlaskie": { id: "woj-podlaskie", name: "Województwo podlaskie", capitals: ["Białystok"], hint: "Północno-wschodnia Polska przy granicy z Litwą i Białorusią." },
+            "pomorskie": { id: "woj-pomorskie", name: "Województwo pomorskie", capitals: ["Gdańsk"], hint: "Północna Polska nad Zatoką Gdańską wraz z Półwyspem Helskim." },
+            "śląskie": { id: "woj-slaskie", name: "Województwo śląskie", capitals: ["Katowice"], hint: "Południowa Polska (Wyżyna Śląska, Beskid Śląski i Żywiecki)." },
+            "świętokrzyskie": { id: "woj-swietokrzyskie", name: "Województwo świętokrzyskie", capitals: ["Kielce"], hint: "Południowo-centralna Polska z Górami Świętokrzyskimi." },
+            "warmińsko-mazurskie": { id: "woj-warminsko-mazurskie", name: "Województwo warmińsko-mazurskie", capitals: ["Olsztyn"], hint: "Północna Polska (Kraina Wielkich Jezior Mazurskich)." },
+            "wielkopolskie": { id: "woj-wielkopolskie", name: "Województwo wielkopolskie", capitals: ["Poznań"], hint: "Środkowo-zachodnia Polska w dorzeczu Warty." },
+            "zachodniopomorskie": { id: "woj-zachodniopomorskie", name: "Województwo zachodniopomorskie", capitals: ["Szczecin"], hint: "Północno-zachodni narożnik Polski nad Bałtykiem i Zalewem Szczecińskim." }
+        };
+
+        const CAPITALS_POOL = [
+            "Wrocław", "Bydgoszcz i Toruń", "Lublin", "Gorzów Wielkopolski i Zielona Góra",
+            "Łódź", "Kraków", "Warszawa", "Opole", "Rzeszów", "Białystok",
+            "Gdańsk", "Katowice", "Kielce", "Olsztyn", "Poznań", "Szczecin"
+        ];
+
+        /**
+         * 3. DOKŁADNA BAZA 65 OBIEKTÓW KARTOGRAFICZNYCH POLSKI (WGS84 [lon, lat]):
+         *    - 16 Województw i ich stolice (stolice bez kropek lokalizacji na mapie)
+         *    - 4 Najdalej wysunięte punkty w Polsce (N, S, E, W)
+         *    - 5 Granic naturalnych i "sztucznych"
+         *    - 27 Krain fizycznogeograficznych (góry, wyżyny, niziny, kotliny, wzgórza, pojezierza, bory, Żuławy)
+         *    - 4 Rzeki (Wisła, Odra, Bug, Warta)
+         *    - 5 Jezior (Wigry, Śniardwy, Łebsko, Żarnowieckie, Mamry)
+         *    - 4 Parki Narodowe (Woliński, Tatrzański, Gór Stołowych, Biebrzański)
+         */
+        const GEO_DATABASE = [
+            // --- 16 WOJEWÓDZTW ---
+            ...Object.entries(VOIVODESHIP_META).map(([key, v]) => ({
+                id: v.id,
+                geoKey: key,
+                type: "voivodeship",
+                name: v.name,
+                category: "voivodeships",
+                badge: v.capitals.length > 1 ? "Województwo (2 stolice)" : "Województwo",
+                capitals: v.capitals,
+                hint: v.hint,
+                desc: `${v.name} • ${v.capitals.length > 1 ? 'Stolice' : 'Stolica'}: ${v.capitals.join(' i ')}`
+            })),
+
+            // =========================================================================
+            // 27 KRAIN: GÓRY, WYŻYNY, NIZINY, KOTLINY, WZGÓRZA, POJEZIERZA, BORY, ŻUŁAWY
+            // (Ułożone od największych do najmniejszych/wewnętrznych dla poprawnego z-index!)
+            // =========================================================================
+            {
+                id: "reg-zulawy-wislane", type: "region", fill: "#2e8b57", stroke: "#14532d",
+                coords: [[[18.66,54.36],[19.05,54.39],[19.42,54.42],[19.32,54.18],[19.18,53.96],[18.92,53.94],[18.72,54.05],[18.62,54.22],[18.66,54.36]]],
+                name: "Żuławy Wiślane", category: "hypso_regions", badge: "Równina deltowa",
+                hint: "Równina deltowa u ujścia Wisły do Zatoki Gdańskiej z obszarami depresyjnymi.",
+                desc: "Żuławy Wiślane – żyzna równina deltowa w ujściu Wisły z największymi w Polsce depresjami."
+            },
+            {
+                id: "reg-pojezierze-mysliborskie", type: "region", fill: "#66c266", stroke: "#2e7d32",
+                coords: [[[14.35,53.28],[14.78,53.32],[15.22,53.26],[15.38,53.02],[15.25,52.78],[14.85,52.72],[14.48,52.78],[14.22,52.92],[14.28,53.12],[14.35,53.28]]],
+                name: "Pojezierze Myśliborskie", category: "hypso_regions", badge: "Pojezierze",
+                hint: "Pojezierze w widłach Odry i dolnej Warty (na południe od Szczecina).",
+                desc: "Pojezierze Myśliborskie – południowo-zachodnia część Pojezierza Zachodniopomorskiego."
+            },
+            {
+                id: "reg-pojezierze-drawskie", type: "region", fill: "#74c66c", stroke: "#2e7d32",
+                coords: [[[15.32,53.85],[15.88,53.95],[16.45,54.02],[16.75,53.82],[16.65,53.48],[16.22,53.36],[15.68,53.38],[15.32,53.58],[15.32,53.85]]],
+                name: "Pojezierze Drawskie", category: "hypso_regions", badge: "Pojezierze",
+                hint: "Centralna część Pojezierza Zachodniopomorskiego z głębokim jeziorem rynnowym Drawsko.",
+                desc: "Pojezierze Drawskie – malownicza kraina morenowa i sandrowa na Pomorzu Zachodnim."
+            },
+            {
+                id: "reg-bory-tucholskie", type: "region", fill: "#52b788", stroke: "#1b4332",
+                coords: [[[17.35,53.98],[17.98,54.02],[18.55,53.95],[18.68,53.62],[18.35,53.46],[17.75,53.45],[17.32,53.62],[17.35,53.98]]],
+                name: "Bory Tucholskie", category: "hypso_regions", badge: "Kraina / kompleks leśny",
+                hint: "Rozległa równina sandrowa w dorzeczu Brdy i Wdy porośnięta jednym z największych kompleksów borów sosnowych w Polsce.",
+                desc: "Bory Tucholskie – rozległy obszar sandrowy porośnięty borami sosnowymi."
+            },
+            {
+                id: "reg-pojezierze-kujawskie", type: "region", fill: "#74c66c", stroke: "#2e7d32",
+                coords: [[[17.75,52.88],[18.45,52.92],[19.02,52.75],[18.95,52.38],[18.35,52.32],[17.75,52.45],[17.75,52.88]]],
+                name: "Pojezierze Kujawskie", category: "hypso_regions", badge: "Pojezierze",
+                hint: "Pojezierze na Kujawach (na południe od Bydgoszczy i Torunia) z jeziorem Gopło.",
+                desc: "Pojezierze Kujawskie – kraina żyznych czarnych ziem kujawskich oraz jeziora Gopło."
+            },
+            {
+                id: "reg-pojezierze-ilawskie", type: "region", fill: "#66c266", stroke: "#2e7d32",
+                coords: [[[19.05,53.92],[19.65,53.98],[20.15,53.88],[20.08,53.52],[19.52,53.48],[19.08,53.62],[19.05,53.92]]],
+                name: "Pojezierze Iławskie", category: "hypso_regions", badge: "Pojezierze",
+                hint: "Zachodnia część Pojezierza Mazurskiego (na wschód od dolnej Wisły, okolice Iławy).",
+                desc: "Pojezierze Iławskie – zachodnia część Pojezierza Mazurskiego z jeziorem Jeziorak."
+            },
+            {
+                id: "reg-pojezierze-suwalskie", type: "region", fill: "#52b788", stroke: "#1b4332",
+                coords: [[[22.68,54.35],[23.25,54.25],[23.48,54.05],[23.38,53.85],[22.78,53.85],[22.65,54.05],[22.68,54.35]]],
+                name: "Pojezierze Suwalskie", category: "hypso_regions", badge: "Pojezierze",
+                hint: "Najbardziej wysunięte na północny wschód pojezierze Polski z jeziorem Wigry i Hańczą.",
+                desc: "Pojezierze Suwalskie – młodoglacjalna kraina ozów, kemów, głazowisk i jeziora Wigry."
+            },
+            {
+                id: "reg-szeskie-wzgorza", type: "region", fill: "#e9c46a", stroke: "#6c584c",
+                coords: [[[22.15,54.32],[22.65,54.32],[22.68,54.06],[22.18,54.05],[22.15,54.32]]],
+                name: "Szeskie Wzgórza", category: "hypso_regions", badge: "Wzgórza morenowe",
+                hint: "Wysokie wzgórza morenowe na Mazurach Garbatych w pobliżu Gołdapi (północno-wschodnia Polska).",
+                desc: "Szeskie Wzgórza – wyniosłe wzgórza morenowe (do 309 m n.p.m.) na Mazurach."
+            },
+            {
+                id: "reg-nizina-szczecinska", type: "region", fill: "#9ed979", stroke: "#4d7c0f",
+                coords: [[[14.42,53.48],[15.15,53.55],[15.35,53.28],[14.85,53.25],[14.38,53.30],[14.42,53.48]]],
+                name: "Nizina Szczecińska", category: "hypso_regions", badge: "Nizina",
+                hint: "Nizina w północno-zachodniej Polsce wokół Zalewu Szczecińskiego i dolnej Odry.",
+                desc: "Nizina Szczecińska – nizina nadmorska w ujściowym odcinku Odry."
+            },
+            {
+                id: "reg-nizina-slaska", type: "region", fill: "#a8e082", stroke: "#3f6212",
+                coords: [[[15.65,51.62],[16.65,51.55],[17.68,51.35],[18.18,50.85],[18.08,50.32],[17.35,50.42],[16.65,50.72],[15.85,51.12],[15.65,51.62]]],
+                name: "Nizina Śląska", category: "hypso_regions", badge: "Nizina",
+                hint: "Najcieplejsza nizina w Polsce ciągnąca się wzdłuż doliny Odry (Wrocław, Opole).",
+                desc: "Nizina Śląska – urodzajna nizina z najdłuższym okresem wegetacyjnym w Polsce."
+            },
+            {
+                id: "reg-nizina-mazowiecka", type: "region", fill: "#b5e48c", stroke: "#4d7c0f",
+                coords: [[[19.15,52.82],[20.35,53.15],[21.65,53.22],[22.15,52.65],[21.95,51.85],[21.15,51.35],[19.85,51.45],[19.05,51.95],[19.15,52.82]]],
+                name: "Nizina Mazowiecka", category: "hypso_regions", badge: "Nizina",
+                hint: "Największa nizina w środkowo-wschodniej Polsce (dorzecze środkowej Wisły, Narwi i Bugu).",
+                desc: "Nizina Mazowiecka – rozległa nizina staroglacjalna w centralnej Polsce."
+            },
+            {
+                id: "reg-nizina-podlaska", type: "region", fill: "#a8e082", stroke: "#3f6212",
+                coords: [[[22.05,53.45],[23.15,53.65],[23.82,53.35],[23.85,52.45],[23.15,52.15],[22.25,52.18],[21.95,52.75],[22.05,53.45]]],
+                name: "Nizina Podlaska", category: "hypso_regions", badge: "Nizina",
+                hint: "Nizina we wschodniej Polsce w dorzeczu Narwi i Biebrzy (Puszcza Białowieska).",
+                desc: "Nizina Podlaska – kraina rozległych dolin rzecznych i puszcz na wschodzie Polski."
+            },
+            {
+                id: "reg-wyzyna-slaska", type: "region", fill: "#f4d35e", stroke: "#a16207",
+                coords: [[[18.22,50.62],[18.85,50.65],[19.22,50.45],[19.18,50.08],[18.55,50.08],[18.25,50.32],[18.22,50.62]]],
+                name: "Wyżyna Śląska", category: "hypso_regions", badge: "Wyżyna",
+                hint: "Wyżyna w południowej Polsce zasobna w węgiel kamienny (Górnośląski Okręg Przemysłowy).",
+                desc: "Wyżyna Śląska – region przemysłowy na zachód od Wyżyny Krakowsko-Częstochowskiej."
+            },
+            {
+                id: "reg-wyzyna-krakowsko-czestochowska", type: "region", fill: "#ee9b00", stroke: "#9a3412",
+                coords: [[[19.12,50.85],[19.58,50.82],[19.88,50.42],[19.95,50.05],[19.55,50.05],[19.25,50.45],[19.12,50.85]]],
+                name: "Wyżyna Krakowsko-Częstochowska", category: "hypso_regions", badge: "Wyżyna",
+                hint: "Pas wapiennych ostańców i jaskiń ciągnący się od Krakowa po Częstochowę.",
+                desc: "Wyżyna Krakowsko-Częstochowska – wyżyna wapienna o rzeźbie krasowej (Jura)."
+            },
+            {
+                id: "reg-wyzyna-malopolska", type: "region", fill: "#f9c74f", stroke: "#92400e",
+                coords: [[[19.75,51.18],[20.75,51.15],[21.65,50.88],[21.52,50.32],[20.45,50.22],[19.88,50.52],[19.75,51.18]]],
+                name: "Wyżyna Małopolska", category: "hypso_regions", badge: "Wyżyna",
+                hint: "Prowincja wyżynna między doliną Pilicy a doliną górnej Wisły (obejmuje Góry Świętokrzyskie).",
+                desc: "Wyżyna Małopolska – makroregion obejmujący m.in. Wyżynę Kielecką i Nieckę Nidziańską."
+            },
+            {
+                id: "reg-wyzyna-lubelska", type: "region", fill: "#f4d35e", stroke: "#a16207",
+                coords: [[[21.85,51.35],[22.75,51.32],[23.85,51.18],[23.75,50.65],[22.75,50.62],[21.92,50.78],[21.85,51.35]]],
+                name: "Wyżyna Lubelska", category: "hypso_regions", badge: "Wyżyna",
+                hint: "Wyżyna lessowa we wschodniej Polsce między Wisłą a Bugiem (z licznymi wąwozami).",
+                desc: "Wyżyna Lubelska – kraina lessowa o żyznych glebach (czarnoziemach)."
+            },
+            {
+                id: "reg-kotlina-oswiecimska", type: "region", fill: "#a3d977", stroke: "#3f6212",
+                coords: [[[18.75,50.08],[19.55,50.08],[19.55,49.85],[18.75,49.85],[18.75,50.08]]],
+                name: "Kotlina Oświęcimska", category: "hypso_regions", badge: "Kotlina podkarpacka",
+                hint: "Zachodnia część Podkarpacia Północnego u zbiegu Wisły, Soły i Przemszy.",
+                desc: "Kotlina Oświęcimska – zapadlisko przedgórskie między Wyżyną Śląską a Pogórzem."
+            },
+            {
+                id: "reg-kotlina-sandomierska", type: "region", fill: "#95d5b2", stroke: "#2d6a4f",
+                coords: [[[20.05,50.12],[21.25,50.32],[22.25,50.55],[23.25,50.15],[22.85,49.78],[21.55,49.75],[20.15,49.88],[20.05,50.12]]],
+                name: "Kotlina Sandomierska", category: "hypso_regions", badge: "Kotlina podkarpacka",
+                hint: "Rozległa trójkątna kotlina w widłach Wisły i Sanu, na północ od Karpat.",
+                desc: "Kotlina Sandomierska – zapadlisko tektoniczne wypełnione osadami morskimi i rzecznymi."
+            },
+            // Masyw Góry Świętokrzyskie renderowany NAD Wyżyną Małopolską
+            {
+                id: "reg-gory-swietokrzyskie", type: "region", fill: "#b86b28", stroke: "#6c360c",
+                coords: [[[20.38,50.98],[21.25,50.88],[21.22,50.72],[20.35,50.82],[20.38,50.98]]],
+                name: "Góry Świętokrzyskie", category: "hypso_regions", badge: "Pasmo górskie",
+                hint: "Niskie, stare góry w centrum Wyżyny Małopolskiej (Łysica, gołoborza).",
+                desc: "Góry Świętokrzyskie – stary masyw górski w centralnej części Wyżyny Małopolskiej."
+            },
+            // Sudety jako łańcuch nadrzędny, a NAD nimi: Karkonosze, Góry Sowie, Góry Stołowe i Kotlina Kłodzka
+            {
+                id: "reg-sudety", type: "region", fill: "#c47d34", stroke: "#78350f",
+                coords: [[[14.92,50.92],[15.65,50.95],[16.45,50.78],[17.15,50.45],[17.65,50.25],[17.35,50.08],[16.45,50.12],[15.75,50.62],[14.88,50.80],[14.92,50.92]]],
+                name: "Sudety", category: "hypso_regions", badge: "Łańcuch górski",
+                hint: "Stare góry zrębowe w południowo-zachodniej Polsce (na granicy z Czechami).",
+                desc: "Sudety – łańcuch górski o budowie zrębowej w południowo-zachodniej Polsce."
+            },
+            {
+                id: "reg-karkonosze", type: "region", fill: "#8c2d19", stroke: "#450a0a",
+                coords: [[[15.32,50.82],[15.88,50.78],[15.85,50.68],[15.32,50.72],[15.32,50.82]]],
+                name: "Karkonosze", category: "hypso_regions", badge: "Pasmo górskie",
+                hint: "Najwyższe pasmo Sudetów ze Śnieżką (1603 m n.p.m.) w zachodniej części woj. dolnośląskiego.",
+                desc: "Karkonosze – najwyższe pasmo Sudetów ze Śnieżką (1603 m n.p.m.)."
+            },
+            {
+                id: "reg-gory-sowie", type: "region", fill: "#a44a24", stroke: "#451a03",
+                coords: [[[16.36,50.75],[16.68,50.65],[16.62,50.54],[16.32,50.64],[16.36,50.75]]],
+                name: "Góry Sowie", category: "hypso_regions", badge: "Pasmo górskie",
+                hint: "Pasmo w Sudetach Środkowych zbudowane z najstarszych skał w Polsce (gnejsów), z Wielką Sową.",
+                desc: "Góry Sowie – pasmo w Sudetach Środkowych zbudowane z prekambryjskich gnejsów."
+            },
+            {
+                id: "reg-gory-stolowe", type: "region", fill: "#9c4221", stroke: "#451a03",
+                coords: [[[16.18,50.52],[16.46,50.48],[16.42,50.38],[16.16,50.42],[16.18,50.52]]],
+                name: "Góry Stołowe", category: "hypso_regions", badge: "Pasmo górskie",
+                hint: "Jedyne w Polsce góry płytowe (Szczeliniec Wielki, Błędne Skały) w Sudetach Środkowych.",
+                desc: "Góry Stołowe – góry płytowe o płaskich wierzchowinach w Sudetach Środkowych."
+            },
+            {
+                id: "reg-kotlina-klodzka", type: "region", fill: "#a8e082", stroke: "#3f6212",
+                coords: [[[16.46,50.46],[16.82,50.45],[16.80,50.16],[16.46,50.18],[16.46,50.46]]],
+                name: "Kotlina Kłodzka", category: "hypso_regions", badge: "Kotlina śródgórska",
+                hint: "Kotlina śródgórska w Sudetach Środkowych otoczona m.in. Górami Stołowymi i Sowimi.",
+                desc: "Kotlina Kłodzka – rozległe obniżenie śródgórskie w Sudetach odwadniane przez Nysę Kłodzką."
+            },
+            // Karpaty jako łańcuch nadrzędny, a NAD nimi: Tatry i Bieszczady
+            {
+                id: "reg-karpaty", type: "region", fill: "#c47d34", stroke: "#78350f",
+                coords: [[[18.75,49.82],[20.15,49.85],[21.55,49.75],[22.85,49.55],[22.82,49.02],[20.05,49.18],[18.85,49.50],[18.75,49.82]]],
+                name: "Karpaty", category: "hypso_regions", badge: "Łańcuch górski",
+                hint: "Młode góry fałdowe ciągnące się wzdłuż całej południowej granicy Polski.",
+                desc: "Karpaty – młody łańcuch górski wypiętrzony w orogenezie alpejskiej na południu Polski."
+            },
+            {
+                id: "reg-tatry", type: "region", fill: "#7c2d12", stroke: "#431407",
+                coords: [[[19.72,49.31],[20.16,49.29],[20.13,49.18],[19.70,49.20],[19.72,49.31]]],
+                name: "Tatry", category: "hypso_regions", badge: "Pasmo górskie",
+                hint: "Najwyższe góry w Polsce o rzeźbie alpejskiej (Rysy 2499 m n.p.m.) w centralnej części Karpat.",
+                desc: "Tatry – najwyższe pasmo Karpat i jedyne góry wysokie (alpejskie) w Polsce."
+            },
+            {
+                id: "reg-bieszczady", type: "region", fill: "#9c4221", stroke: "#451a03",
+                coords: [[[22.05,49.42],[22.85,49.28],[22.84,49.00],[22.02,49.14],[22.05,49.42]]],
+                name: "Bieszczady", category: "hypso_regions", badge: "Pasmo górskie",
+                hint: "Pasmo w Karpatach Wschodnich na południowo-wschodnim krańcu Polski (połoniny, Tarnica).",
+                desc: "Bieszczady – pasmo górskie w Karpatach Wschodnich słynące z połonin."
+            },
+
+            // =========================================================================
+            // 4 RZEKI (Wisła, Odra, Bug, Warta)
+            // =========================================================================
+            {
+                id: "riv-wisla", type: "river", riverRole: "main",
+                coords: [[19.01,49.61],[19.35,49.98],[19.94,50.05],[20.48,50.18],[20.92,50.32],[21.45,50.52],[21.75,50.68],[21.84,51.05],[21.85,51.35],[21.52,51.78],[21.02,52.23],[20.68,52.44],[20.15,52.46],[19.70,52.54],[19.12,52.66],[18.61,53.01],[18.18,53.15],[18.45,53.45],[18.82,53.75],[18.88,54.08],[18.95,54.35]],
+                name: "Wisła", category: "waters", badge: "Rzeka (1047 km)",
+                hint: "Najdłuższa rzeka Polski – od Baraniej Góry przez Kraków, Warszawę, Toruń do Zatoki Gdańskiej.",
+                desc: "Wisła (1047 km) – najdłuższa rzeka Polski i zlewiska Morza Bałtyckiego."
+            },
+            {
+                id: "riv-odra", type: "river", riverRole: "main",
+                coords: [[18.28,49.95],[18.18,50.35],[17.92,50.67],[17.52,50.92],[17.03,51.11],[16.52,51.28],[16.15,51.45],[15.72,51.67],[15.08,52.05],[14.68,52.08],[14.55,52.35],[14.32,52.62],[14.14,52.85],[14.35,53.12],[14.56,53.43],[14.55,53.68]],
+                name: "Odra", category: "waters", badge: "Rzeka (854 km)",
+                hint: "Druga najdłuższa rzeka w Polsce – przez Opole, Wrocław i Szczecin do Zalewu Szczecińskiego.",
+                desc: "Odra (854 km) – druga najdłuższa rzeka Polski, tworząca zachodnią granicę państwa."
+            },
+            {
+                id: "riv-bug", type: "river", riverRole: "main",
+                coords: [[24.05,50.52],[24.14,50.87],[23.82,51.55],[23.60,52.08],[23.12,52.32],[22.65,52.41],[21.85,52.62],[21.08,52.51]],
+                name: "Bug", category: "waters", badge: "Rzeka (772 km)",
+                hint: "Rzeka płynąca wzdłuż wschodniej granicy Polski i uchodząca do Narwi (Zalewu Zegrzyńskiego).",
+                desc: "Bug (772 km) – nieuregulowana rzeka graniczna we wschodniej Polsce, dopływ Narwi."
+            },
+            {
+                id: "riv-warta", type: "river", riverRole: "main",
+                coords: [[19.45,50.50],[19.12,50.81],[18.85,51.12],[18.78,51.45],[18.55,51.95],[18.15,52.18],[17.65,52.15],[16.93,52.41],[16.65,52.71],[16.05,52.65],[15.52,52.68],[15.23,52.73],[14.66,52.59]],
+                name: "Warta", category: "waters", badge: "Rzeka (808 km)",
+                hint: "Największy prawy dopływ Odry płynący przez Częstochowę, Poznań i Gorzów Wielkopolski.",
+                desc: "Warta (808 km) – trzecia pod względem długości rzeka w Polsce, główna rzeka Wielkopolski."
+            },
+
+            // =========================================================================
+            // 5 JEZIOR (Wigry, Śniardwy, Łebsko, Żarnowieckie, Mamry)
+            // =========================================================================
+            {
+                id: "lake-wigry", type: "lake",
+                coords: [[[23.04,54.09],[23.13,54.10],[23.15,54.03],[23.05,54.02],[23.04,54.09]]],
+                name: "Jezioro Wigry", category: "waters", badge: "Jezioro rynnowe",
+                hint: "Malownicze jezioro rynnowe na Pojezierzu Suwalskim (północny wschód Polski).",
+                desc: "Jezioro Wigry – głębokie jezioro rynnowe na Suwalszczyźnie (Wigierski PN)."
+            },
+            {
+                id: "lake-sniardwy", type: "lake",
+                coords: [[[21.62,53.78],[21.74,53.81],[21.85,53.78],[21.86,53.71],[21.72,53.69],[21.62,53.73],[21.62,53.78]]],
+                name: "Jezioro Śniardwy", category: "waters", badge: "Jezioro wytopiskowe",
+                hint: "Największe jezioro w Polsce (113,8 km²) w Krainie Wielkich Jezior Mazurskich.",
+                desc: "Jezioro Śniardwy (113,8 km²) – największe jezioro Polski na Pojezierzu Mazurskim."
+            },
+            {
+                id: "lake-lebsko", type: "lake",
+                coords: [[[17.30,54.73],[17.44,54.75],[17.54,54.73],[17.52,54.69],[17.35,54.68],[17.30,54.73]]],
+                name: "Jezioro Łebsko", category: "waters", badge: "Jezioro przybrzeżne",
+                hint: "Największe jezioro przybrzeżne Polski, odcięte mierzeją od Bałtyku (Słowiński PN).",
+                desc: "Jezioro Łebsko (71,4 km²) – jezioro przybrzeżne na Wybrzeżu Słowińskim."
+            },
+            {
+                id: "lake-zarnowieckie", type: "lake",
+                coords: [[[18.01,54.80],[18.07,54.80],[18.07,54.71],[18.01,54.71],[18.01,54.80]]],
+                name: "Jezioro Żarnowieckie", category: "waters", badge: "Jezioro rynnowe",
+                hint: "Podłużne jezioro rynnowe na Pobrzeżu Kaszubskim, na zachód od Półwyspu Helskiego.",
+                desc: "Jezioro Żarnowieckie – jezioro rynnowe na północy województwa pomorskiego."
+            },
+            {
+                id: "lake-mamry", type: "lake",
+                coords: [[[21.58,54.20],[21.72,54.21],[21.76,54.12],[21.68,54.06],[21.58,54.10],[21.58,54.20]]],
+                name: "Jezioro Mamry", category: "waters", badge: "Jezioro wytopiskowe",
+                hint: "Drugie co do wielkości jezioro w Polsce, położone na północ od Śniardw.",
+                desc: "Jezioro Mamry (104 km²) – kompleks jezior w północnej części Krainy Wielkich Jezior Mazurskich."
+            },
+
+            // =========================================================================
+            // 4 PARKI NARODOWE (Woliński, Tatrzański, Gór Stołowych, Biebrzański)
+            // =========================================================================
+            {
+                id: "pn-wolinski", type: "point", markerKind: "park", label: "PN",
+                coords: [14.48, 53.95],
+                name: "Woliński Park Narodowy", category: "parks", badge: "Park Narodowy",
+                hint: "Nadmorski park narodowy na wyspie Wolin z wybrzeżem klifowym i żubrami.",
+                desc: "Woliński Park Narodowy – chroni klify wyspy Wolin oraz deltę wsteczną Świny."
+            },
+            {
+                id: "pn-tatrzanski", type: "point", markerKind: "park", label: "PN",
+                coords: [19.93, 49.24],
+                name: "Tatrzański Park Narodowy", category: "parks", badge: "Park Narodowy",
+                hint: "Wysokogórski park narodowy na samym południu Polski (Morskie Oko, Rysy, Giewont).",
+                desc: "Tatrzański Park Narodowy – chroni jedyny w Polsce obszar o rzeźbie wysokogórskiej (alpejskiej)."
+            },
+            {
+                id: "pn-gor-stolowych", type: "point", markerKind: "park", label: "PN",
+                coords: [16.34, 50.46],
+                name: "Park Narodowy Gór Stołowych", category: "parks", badge: "Park Narodowy",
+                hint: "Park narodowy w Sudetach Środkowych ze Szczelińcem Wielkim i Błędnymi Skałami.",
+                desc: "Park Narodowy Gór Stołowych – chroni unikatowe góry płytowe i formy skalne."
+            },
+            {
+                id: "pn-biebrzanski", type: "point", markerKind: "park", label: "PN",
+                coords: [22.63, 53.35],
+                name: "Biebrzański Park Narodowy", category: "parks", badge: "Park Narodowy",
+                hint: "Największy park narodowy w Polsce (bagna i torfowiska w dolinie Biebrzy, ostoja łosia).",
+                desc: "Biebrzański Park Narodowy (592 km²) – największy polski park narodowy w woj. podlaskim."
+            },
+
+            // =========================================================================
+            // 4 NAJDALEJ WYSUNIĘTE PUNKTY W POLSCE (N, S, E, W)
+            // =========================================================================
+            {
+                id: "ext-polnoc", type: "point", markerKind: "extreme", label: "N",
+                coords: [18.3025, 54.8358],
+                name: "Najdalej wysunięty punkt na północ (Jastrzębia Góra)",
+                category: "extremes_borders", badge: "Punkt skrajny (N)",
+                hint: "54°50'N – Jastrzębia Góra (obelisk Gwiazda Północy nad Bałtykiem).",
+                desc: "54°50'N, 18°18'E – Jastrzębia Góra (gmina Władysławowo), obelisk Gwiazda Północy."
+            },
+            {
+                id: "ext-poludnie", type: "point", markerKind: "extreme", label: "S",
+                coords: [22.8475, 49.0022],
+                name: "Najdalej wysunięty punkt na południe (Szczyt Opołonek)",
+                category: "extremes_borders", badge: "Punkt skrajny (S)",
+                hint: "49°00'N – szczyt Opołonek w Bieszczadach Zachodnich przy granicy z Ukrainą.",
+                desc: "49°00'N, 22°51'E – szczyt Opołonek (1028 m n.p.m.) w Bieszczadach."
+            },
+            {
+                id: "ext-wschod", type: "point", markerKind: "extreme", label: "E",
+                coords: [24.1458, 50.8686],
+                name: "Najdalej wysunięty punkt na wschód (Zakole Bugu koło Zosina)",
+                category: "extremes_borders", badge: "Punkt skrajny (E)",
+                hint: "24°09'E – zakole rzeki Bug koło wsi Zosin w województwie lubelskim.",
+                desc: "50°52'N, 24°09'E – zakole Bugu koło wsi Zosin (powiat hrubieszowski)."
+            },
+            {
+                id: "ext-zachod", type: "point", markerKind: "extreme", label: "W",
+                coords: [14.1228, 52.8483],
+                name: "Najdalej wysunięty punkt na zachód (Zakole Odry koło Osinowa Dolnego)",
+                category: "extremes_borders", badge: "Punkt skrajny (W)",
+                hint: "14°07'E – zakole Odry koło Osinowa Dolnego w województwie zachodniopomorskim.",
+                desc: "52°51'N, 14°07'E – zakole Odry koło Osinowa Dolnego (powiat gryfiński)."
+            },
+
+            // =========================================================================
+            // 5 GRANIC NATURALNYCH I "SZTUCZNYCH"
+            // =========================================================================
+            {
+                id: "bor-morska", type: "border", color: "#0284c7", dashed: false,
+                coords: [[14.23,53.92],[14.80,54.02],[15.58,54.18],[16.18,54.27],[16.70,54.54],[17.45,54.76],[18.30,54.84],[18.81,54.60],[18.65,54.36],[19.45,54.43]],
+                name: "Granica naturalna morska (Wybrzeże Bałtyku)",
+                category: "extremes_borders", badge: "Granica naturalna",
+                hint: "Linia brzegowa Morza Bałtyckiego na północy Polski (od Świnoujścia po Krynicę Morską).",
+                desc: "Granica naturalna morska na północy Polski (wybrzeże Morza Bałtyckiego)."
+            },
+            {
+                id: "bor-odra-nysa", type: "border", color: "#2563eb", dashed: false,
+                coords: [[14.23,53.92],[14.38,53.55],[14.25,53.18],[14.12,52.85],[14.55,52.45],[14.68,52.05],[14.75,51.55],[14.82,51.05]],
+                name: "Granica naturalna rzeczna na zachodzie (Odra i Nysa Łużycka)",
+                category: "extremes_borders", badge: "Granica naturalna",
+                hint: "Zachodnia granica Polski z Niemcami poprowadzona nurtem Nysy Łużyckiej i Odry.",
+                desc: "Granica naturalna rzeczna z Niemcami na Odrze i Nysie Łużyckiej."
+            },
+            {
+                id: "bor-bug", type: "border", color: "#0d9488", dashed: false,
+                coords: [[23.62,52.12],[23.82,51.55],[24.15,50.87],[23.95,50.35]],
+                name: "Granica naturalna rzeczna na wschodzie (Bug)",
+                category: "extremes_borders", badge: "Granica naturalna",
+                hint: "Wschodni odcinek granicy z Białorusią i Ukrainą biegnący rzeką Bug.",
+                desc: "Granica naturalna rzeczna na Bugu (z Białorusią i Ukrainą)."
+            },
+            {
+                id: "bor-gorska", type: "border", color: "#d97706", dashed: false,
+                coords: [[14.82,51.05],[15.65,50.76],[16.45,50.15],[17.85,50.12],[18.85,49.52],[19.93,49.20],[21.25,49.45],[22.85,49.00]],
+                name: "Granica naturalna górska (Sudety i Karpaty)",
+                category: "extremes_borders", badge: "Granica naturalna",
+                hint: "Południowa granica Polski z Czechami i Słowacją biegnąca grzbietami Sudetów i Karpat.",
+                desc: "Granica naturalna górska poprowadzona grzbietami Sudetów i Karpat."
+            },
+            {
+                id: "bor-sztuczna", type: "border", color: "#9333ea", dashed: true,
+                coords: [[19.85,54.44],[21.25,54.35],[22.79,54.36],[23.51,54.15],[23.52,53.72],[23.88,53.28],[23.94,52.72],[23.55,52.32],[23.62,52.12]],
+                name: "Granica „sztuczna” (lądowa z Rosją, Litwą i północną Białorusią)",
+                category: "extremes_borders", badge: "Granica „sztuczna”",
+                hint: "Odcinki lądowe nieoparte na wyraźnych barierach naturalnych (z Obwodem Królewieckim, Litwą i Białorusią).",
+                desc: "Granica „sztuczna” (lądowa/geometryczna) z Rosją, Litwą oraz północnym odcinkiem z Białorusią."
+            }
+        ];
+
+        const DB_BY_ID = Object.fromEntries(GEO_DATABASE.map(item => [item.id, item]));
+
+        /**
+         * 4. STAN APLIKACJI I INICJALIZACJA D3.JS
+         */
+        let svg, mapGroup, zoomBehavior, projection, geoPath;
+        let currentAppMode = "quiz";
+        let quizList = [];
+        let wrongItems = [];
+        let qIndex = 0;
+        let countCorrect = 0;
+        let countWrong = 0;
+        let streak = 0;
+        let isQuestionAnswered = false;
+        let isWaitingCapital = false;
+
+        // Rozróżnienie krótkiego tapnięcia od przesuwania mapy palcem na telefonie
+        let pointerDownPos = null;
+        let wasMapDragged = false;
+
+        window.onload = async function () {
+            const voivodeshipData = await loadPolandGeoJSON();
+            buildD3Map(voivodeshipData);
+            initQuizCategory();
+        };
+
+        /**
+         * Pobiera prawdziwe granice administracyjne 1:1 z GeoJSON;
+         * w razie braku dostępu do sieci natychmiast ładuje wbudowany precyzyjny zestaw WGS84.
+         */
+        async function loadPolandGeoJSON() {
+            const badge = document.getElementById("geo-source-badge");
+            for (const url of GEOJSON_URLS) {
+                try {
+                    const controller = new AbortController();
+                    const timer = setTimeout(() => controller.abort(), 3200);
+                    const resp = await fetch(url, { signal: controller.signal });
+                    clearTimeout(timer);
+                    if (resp.ok) {
+                        const data = await resp.json();
+                        if (data && data.features && data.features.length >= 16) {
+                            badge.textContent = "GeoJSON 1:1 Online";
+                            badge.classList.remove("hidden");
+                            return data;
+                        }
+                    }
+                } catch (e) {
+                    // Kolejne źródło lub fallback offline
+                }
+            }
+            badge.textContent = "GeoJSON 1:1 (WGS84)";
+            badge.classList.remove("hidden");
+            return FALLBACK_VOIVODESHIPS_GEOJSON;
+        }
+
+        /**
+         * Budowa interaktywnej mapy kartograficzno-hipsometrycznej D3.js
+         */
+        function buildD3Map(voivodeshipGeoJSON) {
+            const container = document.getElementById("map-container");
+            const width = container.clientWidth || 800;
+            const height = container.clientHeight || 600;
+
+            svg = d3.select("#d3-poland-map")
+                .attr("viewBox", `0 0 ${width} ${height}`)
+                .attr("preserveAspectRatio", "xMidYMid meet");
+
+            mapGroup = svg.append("g").attr("id", "map-root");
+
+            // Projekcja Merkatora automatycznie dopasowana do obrysu Polski 1:1
+            projection = d3.geoMercator().fitExtent([[18, 18], [width - 18, height - 18]], voivodeshipGeoJSON);
+            geoPath = d3.geoPath().projection(projection);
+
+            // Generator wygładzonych organicznych wielokątów dla krain fizycznogeograficznych
+            const smoothRegionLine = d3.line().curve(d3.curveCatmullRomClosed.alpha(0.6));
+            const smoothRiverLine = d3.line().curve(d3.curveCatmullRom.alpha(0.5));
+
+            // Obsługa Zoom & Pan (pinch-to-zoom i przesuwanie jednym palcem na telefonie)
+            zoomBehavior = d3.zoom()
+                .scaleExtent([1, 8])
+                .on("start", (event) => {
+                    wasMapDragged = false;
+                    if (event.sourceEvent) {
+                        const pt = event.sourceEvent.touches ? event.sourceEvent.touches[0] : event.sourceEvent;
+                        pointerDownPos = { x: pt.clientX, y: pt.clientY };
+                    }
+                })
+                .on("zoom", (event) => {
+                    if (event.sourceEvent && pointerDownPos) {
+                        const pt = event.sourceEvent.touches ? event.sourceEvent.touches[0] : event.sourceEvent;
+                        const dist = Math.hypot(pt.clientX - pointerDownPos.x, pt.clientY - pointerDownPos.y);
+                        if (dist > 7) wasMapDragged = true;
+                    }
+                    mapGroup.attr("transform", event.transform);
+                });
+
+            svg.call(zoomBehavior);
+
+            // WARSTWA 1: 16 Województw (GeoJSON)
+            const gVoiv = mapGroup.append("g").attr("id", "g-voivodeships");
+            gVoiv.selectAll("path")
+                .data(voivodeshipGeoJSON.features)
+                .enter()
+                .append("path")
+                .attr("d", geoPath)
+                .attr("class", "voivodeship")
+                .attr("id", d => resolveVoivodeshipId(d))
+                .attr("data-geo-id", d => resolveVoivodeshipId(d));
+
+            // WARSTWA 2: Organiczne pasy rzeźby terenu (hipsometria z reliefem)
+            const gRegions = mapGroup.append("g")
+                .attr("id", "g-regions")
+                .attr("filter", "url(#hypso-relief)");
+
+            const regionsData = GEO_DATABASE.filter(d => d.type === "region");
+            gRegions.selectAll("path")
+                .data(regionsData)
+                .enter()
+                .append("path")
+                .attr("d", d => {
+                    const ring = d.coords[0];
+                    // Pomijamy powtórzony punkt domykający dla curveCatmullRomClosed
+                    const pts = ring.slice(0, -1).map(c => projection(c));
+                    return smoothRegionLine(pts);
+                })
+                .attr("id", d => d.id)
+                .attr("data-geo-id", d => d.id)
+                .attr("class", "region-poly")
+                .attr("fill", d => d.fill)
+                .attr("stroke", d => d.stroke);
+
+            // WARSTWA 3: Sieć hydrograficzna – Rzeki i Jeziora
+            const gWaters = mapGroup.append("g")
+                .attr("id", "g-waters")
+                .attr("filter", "url(#water-glow)");
+
+            const riversData = GEO_DATABASE.filter(d => d.type === "river");
+            const riverGroups = gWaters.selectAll("g.river-group")
+                .data(riversData)
+                .enter()
+                .append("g")
+                .attr("id", d => d.id)
+                .attr("data-geo-id", d => d.id)
+                .attr("class", "river-group river-main");
+
+            riverGroups.append("path")
+                .attr("class", "river-line")
+                .attr("d", d => smoothRiverLine(d.coords.map(c => projection(c))));
+            riverGroups.append("path")
+                .attr("class", "river-hit")
+                .attr("d", d => smoothRiverLine(d.coords.map(c => projection(c))));
+
+            // Jeziora z powiększoną niewidoczną strefą trafienia palcem (r=18)
+            const lakesData = GEO_DATABASE.filter(d => d.type === "lake");
+            const lakeGroups = gWaters.selectAll("g.lake-group")
+                .data(lakesData)
+                .enter()
+                .append("g")
+                .attr("id", d => d.id)
+                .attr("data-geo-id", d => d.id)
+                .attr("class", "lake-group");
+
+            lakeGroups.append("path")
+                .attr("class", "lake-poly")
+                .attr("d", d => {
+                    const pts = d.coords[0].slice(0, -1).map(c => projection(c));
+                    return smoothRegionLine(pts);
+                });
+
+            lakeGroups.append("circle")
+                .attr("class", "lake-hit")
+                .attr("r", 18)
+                .attr("cx", d => geoPath.centroid({ type: "Polygon", coordinates: d.coords })[0])
+                .attr("cy", d => geoPath.centroid({ type: "Polygon", coordinates: d.coords })[1]);
+
+            // WARSTWA 4: Granice naturalne i "sztuczne"
+            const gBorders = mapGroup.append("g").attr("id", "g-borders");
+            const bordersData = GEO_DATABASE.filter(d => d.type === "border");
+            const borderGroups = gBorders.selectAll("g.border-group")
+                .data(bordersData)
+                .enter()
+                .append("g")
+                .attr("id", d => d.id)
+                .attr("data-geo-id", d => d.id)
+                .attr("class", "border-group");
+
+            borderGroups.append("path")
+                .attr("class", "border-line")
+                .attr("stroke", d => d.color)
+                .attr("stroke-dasharray", d => d.dashed ? "8 5" : null)
+                .attr("d", d => geoPath({ type: "LineString", coordinates: d.coords }));
+            borderGroups.append("path")
+                .attr("class", "border-hit")
+                .attr("d", d => geoPath({ type: "LineString", coordinates: d.coords }));
+
+            // WARSTWA 5: Szczyty górskie (▲), Parki Narodowe i Punkty skrajne (z hit-area r=16 dla dotyku)
+            const gPoints = mapGroup.append("g").attr("id", "g-points");
+            const pointsData = GEO_DATABASE.filter(d => d.type === "point");
+            const markers = gPoints.selectAll("g.geo-marker")
+                .data(pointsData)
+                .enter()
+                .append("g")
+                .attr("id", d => d.id)
+                .attr("data-geo-id", d => d.id)
+                .attr("class", "geo-marker")
+                .attr("transform", d => {
+                    const [x, y] = projection(d.coords);
+                    return `translate(${x}, ${y})`;
+                });
+
+            markers.each(function (d) {
+                const el = d3.select(this);
+
+                // Powiększona niewidoczna strefa trafienia palcem (r=18)
+                el.append("circle")
+                    .attr("r", 18)
+                    .attr("fill", "transparent");
+
+                if (d.markerKind === "park") {
+                    el.append("circle")
+                        .attr("class", "marker-shape")
+                        .attr("r", 8.5)
+                        .attr("fill", "#15803d")
+                        .attr("stroke", "#ffffff")
+                        .attr("stroke-width", 1.8);
+                    el.append("text")
+                        .attr("y", 3)
+                        .attr("text-anchor", "middle")
+                        .attr("fill", "#ffffff")
+                        .attr("font-size", "8px")
+                        .attr("font-weight", "800")
+                        .attr("pointer-events", "none")
+                        .text(d.label);
+                } else {
+                    el.append("rect")
+                        .attr("class", "marker-shape")
+                        .attr("x", -7)
+                        .attr("y", -7)
+                        .attr("width", 14)
+                        .attr("height", 14)
+                        .attr("rx", 2)
+                        .attr("transform", "rotate(45)")
+                        .attr("fill", "#e11d48")
+                        .attr("stroke", "#ffffff")
+                        .attr("stroke-width", 1.8);
+                    el.append("text")
+                        .attr("y", 3)
+                        .attr("text-anchor", "middle")
+                        .attr("fill", "#ffffff")
+                        .attr("font-size", "8px")
+                        .attr("font-weight", "800")
+                        .attr("pointer-events", "none")
+                        .text(d.label);
+                }
+            });
+
+            bindInteractions();
+        }
+
+        function resolveVoivodeshipId(feature) {
+            const rawName = (feature.properties.nazwa || feature.properties.name || feature.properties.JPT_NAZWA_ || "").toLowerCase().trim();
+            const cleanName = rawName.replace("województwo ", "");
+            const meta = VOIVODESHIP_META[cleanName];
+            return meta ? meta.id : null;
+        }
+
+        function bindInteractions() {
+            const tooltip = document.getElementById("hover-tooltip");
+            const ttName = document.getElementById("tt-name");
+            const ttDesc = document.getElementById("tt-desc");
+
+            document.querySelectorAll("[data-geo-id]").forEach(el => {
+                const geoId = el.getAttribute("data-geo-id");
+                const item = DB_BY_ID[geoId];
+                if (!item) return;
+
+                el.addEventListener("click", (ev) => {
+                    if (wasMapDragged) {
+                        wasMapDragged = false;
+                        return;
+                    }
+                    ev.stopPropagation();
+                    onMapObjectClick(geoId);
+                });
+
+                el.addEventListener("mousemove", (ev) => {
+                    if (currentAppMode !== "learn") return;
+                    ttName.textContent = item.name;
+                    ttDesc.textContent = item.desc;
+                    tooltip.classList.remove("hidden");
+                    tooltip.style.left = Math.min(ev.clientX + 14, window.innerWidth - 280) + "px";
+                    tooltip.style.top = Math.min(ev.clientY + 14, window.innerHeight - 90) + "px";
+                });
+
+                el.addEventListener("mouseleave", () => {
+                    tooltip.classList.add("hidden");
+                });
+            });
+        }
+
+        /**
+         * 5. STEROWANIE WIDOKIEM MAPY, ZOOMEM I SZUFLADAMI MOBILNYMI
+         */
+        function zoomMap(factor) {
+            svg.transition().duration(240).call(zoomBehavior.scaleBy, factor);
+        }
+
+        function resetZoom() {
+            svg.transition().duration(280).call(zoomBehavior.transform, d3.zoomIdentity);
+        }
+
+        function setLayerVisibility(groupId, isVisible) {
+            const g = document.getElementById(groupId);
+            if (g) g.style.display = isVisible ? "" : "none";
+        }
+
+        function setAllLayers(isVisible) {
+            setLayerVisibility("g-regions", isVisible);
+            setLayerVisibility("g-waters", isVisible);
+            setLayerVisibility("g-borders", isVisible);
+            setLayerVisibility("g-points", isVisible);
+            document.getElementById("chk-regions").checked = isVisible;
+            document.getElementById("chk-waters").checked = isVisible;
+            document.getElementById("chk-borders").checked = isVisible;
+            document.getElementById("chk-points").checked = isVisible;
+        }
+
+        function setMapTheme(theme) {
+            const container = document.getElementById("map-container");
+            const btnHypso = document.getElementById("btn-view-hypso");
+            const btnAdmin = document.getElementById("btn-view-admin");
+
+            if (theme === "hypsometric") {
+                container.classList.remove("mode-admin");
+                container.classList.add("mode-hypsometric");
+                btnHypso.className = "min-h-[36px] px-2.5 py-1 rounded-lg font-bold bg-emerald-700 text-white shadow-sm transition";
+                btnAdmin.className = "min-h-[36px] px-2.5 py-1 rounded-lg font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition";
+                setAllLayers(true);
+            } else {
+                container.classList.remove("mode-hypsometric");
+                container.classList.add("mode-admin");
+                btnAdmin.className = "min-h-[36px] px-2.5 py-1 rounded-lg font-bold bg-slate-800 text-white shadow-sm transition";
+                btnHypso.className = "min-h-[36px] px-2.5 py-1 rounded-lg font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition";
+                setAllLayers(false);
+            }
+        }
+
+        function toggleDrawer(id) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const isHidden = el.classList.contains("hidden");
+            if (isHidden) {
+                el.classList.remove("hidden");
+                if (id === "layers-bar") el.classList.add("flex");
+                if (id === "legend-body") document.getElementById("legend-arrow").textContent = "Ukryj ▴";
+            } else {
+                el.classList.add("hidden");
+                if (id === "layers-bar") el.classList.remove("flex");
+                if (id === "legend-body") document.getElementById("legend-arrow").textContent = "Pokaż ▾";
+            }
+        }
+
+        /**
+         * 6. LOGIKA QUIZU I TRYBU NAUKI
+         */
+        function switchAppMode(mode) {
+            currentAppMode = mode;
+            clearHighlights();
+            document.getElementById("hover-tooltip").classList.add("hidden");
+
+            const tabQuiz = document.getElementById("tab-quiz");
+            const tabLearn = document.getElementById("tab-learn");
+            const panelQuiz = document.getElementById("panel-quiz");
+            const panelSummary = document.getElementById("panel-summary");
+            const panelLearn = document.getElementById("panel-learn");
+
+            if (mode === "quiz") {
+                tabQuiz.className = "min-h-[38px] px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-bold bg-blue-600 text-white shadow transition";
+                tabLearn.className = "min-h-[38px] px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-bold text-slate-300 hover:text-white transition";
+                panelLearn.classList.add("hidden");
+                panelSummary.classList.add("hidden");
+                panelQuiz.classList.remove("hidden");
+                initQuizCategory();
+            } else {
+                tabLearn.className = "min-h-[38px] px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-bold bg-emerald-600 text-white shadow transition";
+                tabQuiz.className = "min-h-[38px] px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-bold text-slate-300 hover:text-white transition";
+                panelQuiz.classList.add("hidden");
+                panelSummary.classList.add("hidden");
+                panelLearn.classList.remove("hidden");
+                setMapTheme("hypsometric");
+            }
+        }
+
+        function initQuizCategory(customItems = null) {
+            const cat = document.getElementById("category-filter").value;
+            let items = customItems
+                ? [...customItems]
+                : (cat === "all" ? [...GEO_DATABASE] : GEO_DATABASE.filter(i => i.category === cat));
+
+            // Automatyczne dopasowanie podkładu mapy do wybranej kategorii
+            if (!customItems && cat === "voivodeships") {
+                setMapTheme("admin");
+            } else {
+                setMapTheme("hypsometric");
+            }
+
+            // Tasowanie Fishera-Yatesa
+            for (let i = items.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [items[i], items[j]] = [items[j], items[i]];
+            }
+
+            quizList = items;
+            wrongItems = [];
+            qIndex = 0;
+            countCorrect = 0;
+            countWrong = 0;
+            streak = 0;
+
+            document.getElementById("panel-summary").classList.add("hidden");
+            if (currentAppMode === "quiz") {
+                document.getElementById("panel-quiz").classList.remove("hidden");
+            }
+            displayCurrentQuestion();
+        }
+
+        function retryMistakes() {
+            if (wrongItems.length > 0) {
+                initQuizCategory(wrongItems);
+            }
+        }
+
+        function displayCurrentQuestion() {
+            clearHighlights();
+            isQuestionAnswered = false;
+            isWaitingCapital = false;
+
+            document.getElementById("capital-box").classList.add("hidden");
+            document.getElementById("quiz-feedback").classList.add("hidden");
+            document.getElementById("btn-next").classList.add("hidden");
+            document.getElementById("btn-hint").classList.remove("hidden");
+            document.getElementById("btn-skip").classList.remove("hidden");
+
+            if (qIndex >= quizList.length) {
+                renderSummary();
+                return;
+            }
+
+            const current = quizList[qIndex];
+            const total = quizList.length;
+
+            document.getElementById("quiz-progress-label").textContent = `Pytanie ${qIndex + 1} z ${total}`;
+            document.getElementById("stat-correct").textContent = `✓ ${countCorrect}`;
+            document.getElementById("stat-wrong").textContent = `✕ ${countWrong}`;
+            document.getElementById("stat-streak").textContent = `🔥 ${streak}`;
+            document.getElementById("quiz-progress-bar").style.width = `${Math.round((qIndex / total) * 100)}%`;
+
+            document.getElementById("q-badge").textContent = current.badge;
+            document.getElementById("q-title").textContent = `Wskaż na mapie: ${current.name}`;
+            document.getElementById("q-subtext").textContent = current.capitals
+                ? "Najpierw dotknij to województwo na mapie, a następnie wskaż jego stolicę."
+                : "Dotknij właściwy obiekt na mapie Polski.";
+
+            // Upewnij się, że warstwa szukanego obiektu jest widoczna
+            if (current.type === "region") setLayerVisibility("g-regions", true);
+            if (current.type === "river" || current.type === "lake") setLayerVisibility("g-waters", true);
+            if (current.type === "border") setLayerVisibility("g-borders", true);
+            if (current.type === "point") setLayerVisibility("g-points", true);
+        }
+
+        function onMapObjectClick(clickedId) {
+            const clickedObj = DB_BY_ID[clickedId];
+            if (!clickedObj) return;
+
+            // Tryb Nauki (Encyklopedia)
+            if (currentAppMode === "learn") {
+                clearHighlights();
+                const node = document.getElementById(clickedId);
+                if (node) node.classList.add("is-correct");
+
+                document.getElementById("learn-card").innerHTML = `
+                    <span class="inline-block w-fit px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[11px] font-bold mb-1">${clickedObj.badge}</span>
+                    <div class="text-sm sm:text-base font-extrabold text-slate-900">${clickedObj.name}</div>
+                    <div class="text-xs text-slate-600 mt-1 leading-relaxed">${clickedObj.desc}</div>
+                `;
+                return;
+            }
+
+            // Tryb Quizu
+            if (isQuestionAnswered || isWaitingCapital) return;
+
+            const targetObj = quizList[qIndex];
+            const targetNode = document.getElementById(targetObj.id);
+            const clickedNode = document.getElementById(clickedId);
+
+            if (clickedId === targetObj.id) {
+                if (targetNode) targetNode.classList.add("is-correct");
+
+                // Dwuetapowe pytanie dla województwa -> stolica (bez kropek na mapie!)
+                if (targetObj.capitals) {
+                    isWaitingCapital = true;
+                    document.getElementById("btn-hint").classList.add("hidden");
+                    document.getElementById("btn-skip").classList.add("hidden");
+                    openCapitalChallenge(targetObj);
+                } else {
+                    countCorrect++;
+                    streak++;
+                    isQuestionAnswered = true;
+                    setFeedback(true, `Świetnie! ${targetObj.desc}`);
+                    showNextControls();
+                }
+            } else {
+                countWrong++;
+                streak = 0;
+                isQuestionAnswered = true;
+                if (!wrongItems.includes(targetObj)) wrongItems.push(targetObj);
+
+                if (clickedNode) clickedNode.classList.add("is-wrong");
+                if (targetNode) targetNode.classList.add("is-correct", "is-hint");
+
+                setFeedback(false, `Błąd! Wskazano: ${clickedObj.name}. Prawidłowa lokalizacja (${targetObj.name}) została podświetlona na zielono.`);
+                showNextControls();
+            }
+        }
+
+        function openCapitalChallenge(voivObj) {
+            const box = document.getElementById("capital-box");
+            const btnGrid = document.getElementById("capital-buttons");
+            const prompt = document.getElementById("capital-prompt");
+
+            const correctAnswer = voivObj.capitals.join(" i ");
+            prompt.textContent = `Województwo wskazane! Wybierz ${voivObj.capitals.length > 1 ? 'stolice' : 'stolicę'} (${voivObj.name}):`;
+
+            const distractors = CAPITALS_POOL
+                .filter(c => c !== correctAnswer)
+                .sort(() => Math.random() - 0.5)
+                .slice(0, 3);
+
+            const options = [correctAnswer, ...distractors].sort(() => Math.random() - 0.5);
+
+            btnGrid.innerHTML = "";
+            options.forEach(opt => {
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.textContent = opt;
+                btn.className = "min-h-[44px] py-2.5 px-3 rounded-xl border border-indigo-200 bg-white active:bg-indigo-100 hover:bg-indigo-50 text-slate-800 text-xs sm:text-sm font-bold text-left transition shadow-sm";
+                btn.onclick = () => checkCapitalAnswer(btn, opt, correctAnswer, voivObj);
+                btnGrid.appendChild(btn);
+            });
+
+            box.classList.remove("hidden");
+        }
+
+        function checkCapitalAnswer(btn, chosen, correctAnswer, voivObj) {
+            if (isQuestionAnswered) return;
+            isQuestionAnswered = true;
+            isWaitingCapital = false;
+
+            document.querySelectorAll("#capital-buttons button").forEach(b => {
+                b.disabled = true;
+                if (b.textContent === correctAnswer) {
+                    b.className = "min-h-[44px] py-2.5 px-3 rounded-xl border-2 border-emerald-600 bg-emerald-100 text-emerald-950 text-xs sm:text-sm font-extrabold text-left";
+                }
+            });
+
+            if (chosen === correctAnswer) {
+                countCorrect++;
+                streak++;
+                setFeedback(true, `Brawo! ${voivObj.desc}`);
+            } else {
+                countWrong++;
+                streak = 0;
+                if (!wrongItems.includes(voivObj)) wrongItems.push(voivObj);
+                btn.className = "min-h-[44px] py-2.5 px-3 rounded-xl border-2 border-rose-600 bg-rose-100 text-rose-950 text-xs sm:text-sm font-extrabold text-left";
+                setFeedback(false, `Niepoprawna stolica! ${voivObj.desc}`);
+            }
+
+            showNextControls();
+        }
+
+        function setFeedback(ok, text) {
+            const fb = document.getElementById("quiz-feedback");
+            fb.textContent = text;
+            fb.className = ok
+                ? "rounded-xl p-3 text-xs sm:text-sm font-semibold border bg-emerald-50 border-emerald-300 text-emerald-900"
+                : "rounded-xl p-3 text-xs sm:text-sm font-semibold border bg-rose-50 border-rose-300 text-rose-900";
+            fb.classList.remove("hidden");
+
+            document.getElementById("stat-correct").textContent = `✓ ${countCorrect}`;
+            document.getElementById("stat-wrong").textContent = `✕ ${countWrong}`;
+            document.getElementById("stat-streak").textContent = `🔥 ${streak}`;
+        }
+
+        function showNextControls() {
+            document.getElementById("btn-hint").classList.add("hidden");
+            document.getElementById("btn-skip").classList.add("hidden");
+            document.getElementById("btn-next").classList.remove("hidden");
+        }
+
+        function triggerHint() {
+            if (isQuestionAnswered) return;
+            const current = quizList[qIndex];
+            document.getElementById("q-subtext").innerHTML = `<strong class="text-amber-700">Podpowiedź:</strong> ${current.hint}`;
+            const node = document.getElementById(current.id);
+            if (node) node.classList.add("is-hint");
+        }
+
+        function triggerSkip() {
+            if (isQuestionAnswered) return;
+            const current = quizList[qIndex];
+            const node = document.getElementById(current.id);
+            if (node) node.classList.add("is-correct", "is-hint");
+
+            countWrong++;
+            streak = 0;
+            isQuestionAnswered = true;
+            if (!wrongItems.includes(current)) wrongItems.push(current);
+
+            setFeedback(false, `Pominięto. Prawidłowa lokalizacja: ${current.desc}`);
+            showNextControls();
+        }
+
+        function goNextQuestion() {
+            qIndex++;
+            displayCurrentQuestion();
+        }
+
+        function clearHighlights() {
+            document.querySelectorAll(".is-correct, .is-wrong, .is-hint").forEach(el => {
+                el.classList.remove("is-correct", "is-wrong", "is-hint");
+            });
+        }
+
+        function renderSummary() {
+            document.getElementById("quiz-progress-bar").style.width = "100%";
+            document.getElementById("panel-quiz").classList.add("hidden");
+            const panel = document.getElementById("panel-summary");
+            const total = countCorrect + countWrong;
+            const percent = total > 0 ? Math.round((countCorrect / total) * 100) : 0;
+
+            document.getElementById("summary-stats").textContent =
+                `Wynik końcowy: ${countCorrect} poprawnych, ${countWrong} błędnych (${percent}% skuteczności).`;
+
+            const retryBtn = document.getElementById("btn-retry-wrong");
+            if (wrongItems.length > 0) {
+                retryBtn.textContent = `Powtórz błędne odpowiedzi (${wrongItems.length})`;
+                retryBtn.classList.remove("hidden");
+            } else {
+                retryBtn.classList.add("hidden");
+            }
+
+            panel.classList.remove("hidden");
+        }
+    </script>
+</body>
+</html>
